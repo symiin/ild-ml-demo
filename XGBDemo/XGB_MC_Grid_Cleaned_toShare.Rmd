@@ -1,0 +1,345 @@
+---
+title: "Dynamic ILD features with XGBoost"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(ggpattern)
+library(xgboost)
+library(lme4)
+library(splines)
+
+source("../HelperFunctions/FeatureEngineeringRegularGridCleaned.R")
+options(scipen=999)
+
+seed_num <- 123
+set.seed(seed_num)
+```
+
+#### [3a] Set up Python environment and functions
+
+I would suggest setting up your conda environment outside of R, and verify that you can run this okay:
+* conda create -n xgb_smep python=3.11 -y
+* conda activate xgb_smep
+* conda install -c conda-forge numpy pandas scikit-learn xgboost hyperopt -y
+* python -c "import numpy, pandas, sklearn, xgboost, hyperopt; print('ok')"
+
+After that, run the followings. Make sure that you give R the correct conda env name.
+
+```{r}
+## Run at the top of every session, BEFORE any other Python use.
+library(reticulate)
+use_condaenv("xgb_smep", required = TRUE)
+
+setup_hyperopt_xgb()                    # defines the Python functions
+
+```
+
+## 1. Simulate data
+
+```{r}
+NNow    <- 500
+TmaxNow <- 300
+TminNow <- 250
+
+dat <- simulate_burst_ou_mixed2(
+  N    = NNow,
+  Tmin = TminNow,
+  Tmax = TmaxNow,
+  seed = seed_num,
+  Tend = 30
+)
+
+```
+
+### [1a] Pooled person-time XGB, supplied hyperparameters
+
+Before running anything, notice that I set n_trials0 (number of permutation importance trials) to 10 for faster running. In the manuscript, I set this to 100.
+
+The code chunk below runs the pooled person-time XGBoost analysis with supplied hyperparameters. 
+
+```{r}
+
+n_trials0 = 10 #Number of permutation importance trials; 100 in manuscript. Set to 10 for faster run
+isPlot = FALSE #Whether to generate plots
+
+pooled <- run_pooled_xgb(
+  dat       = dat,
+  targets   = c("Y1", "Y2"),
+  n_trials  = n_trials0, #number of random subject-level train/test splits or trials
+  test_prop = 0.30, #proportion of held-out (test) subjects
+  n_repeats = 10,
+  nrounds   = 300,
+  params    = list(
+    max_depth        = 3,
+    eta              = 0.05,
+    subsample        = 0.80,
+    colsample_bytree = 0.80
+  ),
+  tune = FALSE,
+  seed = seed_num
+)
+
+
+if (isPlot){
+pdf("A_PooledXGB.pdf")
+plot_perm_compare(
+  perm_summary = pooled$perm_summary,
+  value_col    = "mean_importance_pct",
+  outcome_col  = "target",
+  plot_title   = "(A) Pooled XGB w/o Hyperopt",
+  y_lab        = "Mean % increase in loss"
+)
+dev.off()
+}
+```
+
+#### [1b] Pooled XGB with Hyperopt-tuned hyperparameters
+
+```{r}
+pooled_tuned <- run_pooled_xgb(
+  dat        = dat,
+  targets    = c("Y1", "Y2"),
+  n_trials   = n_trials0,
+  test_prop  = 0.30,
+  valid_prop = 0.20,
+  n_repeats  = 10,
+  tune       = TRUE,
+  max_evals  = 30,
+  seed       = seed_num
+)
+
+check_xgb_run(pooled, label = "pooled")
+check_xgb_run(pooled_tuned, label = "pooled tuned")
+
+pooled_tuned$perm_summary
+pooled_tuned$params #Hyperparameters
+summarize_hyperopt_params(pooled_tuned$params, label = "pooled")
+
+#Compare untuned pooled xgb results
+pooled$perm_summary
+pooled$params
+
+if (isPlot){
+pdf("B_PooledXGB.pdf")
+plot_perm_compare(
+  perm_summary = pooled_tuned$perm_summary,
+  value_col    = "mean_importance_pct",
+  outcome_col  = "target",
+  plot_title   = "(B) Pooled XGB w/ Hyperopt",
+  y_lab        = "Mean % increase in loss"
+)
+dev.off()
+}
+```
+
+### [2a] Sequential slow -> fast decomposition, supplied hyperparameters
+
+```{r}
+fast <- run_fast_xgb(
+  dat        = dat,
+  outcomes   = c("Y1_resid_sd", "Y2_resid_sd", "resid_CCF_0"),
+  n_trials   = n_trials0,
+  test_prop  = 0.30,
+  valid_prop = 0.20,
+  n_repeats  = 10,
+  tune       = FALSE,
+  seed       = seed_num,
+  grid_step = .05
+)
+
+check_xgb_run(fast, label = "fast untuned")
+
+fast$perm_summary
+
+if (isPlot){
+pdf("A_FastXGB_noHyper.pdf")
+plot_perm_compare(
+  perm_summary = fast$perm_summary,
+  value_col    = "median_importance_pct",
+  y_lab        = "Median % relative increase in test loss",
+  plot_title   = "(A) Between-person XGB w/o Hyperopt",
+  x_lim = c(0,30)
+)
+dev.off()
+
+pdf("C_FastXGB_noHyper.pdf")
+plot_perm_compare(
+  perm_summary = fast$perm_summary,
+  value_col    = "prop_positive",
+  y_lab              = "Proportion +ve permutation importance",
+  plot_title         = "(C) Between-person XGB w/o Hyperopt"
+)
+dev.off()
+}
+
+#Keep feature order from untuned model
+ord <- with(fast$perm_summary,
+            names(sort(tapply(mean_importance, feature, max), decreasing = TRUE)))
+
+```
+
+#### [2b] Sequential XGB with Hyperopt
+
+The slow models are reused, not re-fit.
+
+```{r}
+fast_tuned <- run_fast_xgb(
+  slow_models = fast$slow_models,   # now safe to reuse
+  fast_feat   = fast$fast_feat,
+  outcomes    = c("Y1_resid_sd", "Y2_resid_sd", "resid_CCF_0"),
+  n_trials    = n_trials0,
+  test_prop   = 0.30,
+  valid_prop  = 0.20,
+  n_repeats   = 10,
+  tune        = TRUE,
+  tune_by     = "outcome",
+  max_evals   = 30,
+  seed        = seed_num,
+  grid_step = .05
+)
+
+if (isPlot){
+pdf("B_FastXGB_Hyper.pdf")
+plot_perm_compare(
+  perm_summary       = fast_tuned$perm_summary,
+  value_col    = "median_importance_pct",
+  y_lab        = "Median % relative increase in test loss",
+  plot_title   = "(B) Between-person XGB w/ Hyperopt",
+  feature_order = ord,
+  x_lim = c(0,30)
+)
+dev.off()
+
+pdf("D_FastXGB_Hyper.pdf")
+plot_perm_compare(
+  perm_summary       = fast_tuned$perm_summary,
+  value_col    = "prop_positive",
+  y_lab        = "Proportion +ve permutation importance",
+  plot_title   = "(D) Between-person XGB w/ Hyperopt",
+  feature_order = ord
+)
+dev.off()
+}
+```
+
+### [2c] Compare tuned and untuned fast-XGB models
+
+```{r}
+check_xgb_run(fast, label = "fast untuned, per outcome")
+check_xgb_run(fast_tuned, label = "fast tuned, per outcome")
+
+# To get permutation importance summary measures
+perm_sum <- fast_tuned$perm_summary
+perm_sum[perm_sum$target=="resid_CCF_0" & (perm_sum$feature=="Y1_acf1"|
+ perm_sum$feature=="Y2_acf1"|
+ perm_sum$feature=="Y1_entropy"),]
+
+perm_sum[(perm_sum$feature=="X2i"|
+ perm_sum$feature=="X3i"|
+ perm_sum$feature=="X4i"),]
+
+# Inspect the hyperparameters used
+t(sapply(fast_tuned$params_by_outcome, function(p)
+  round(unlist(p[c("max_depth", "n_estimators", "learning_rate",
+                   "min_child_weight", "subsample","colsample_bytree",
+                   "reg_lambda")]), 4)))
+
+
+
+```
+
+### [3] Predicted curves from a saved model
+
+```{r}
+curve_y1 <- xgb_pred_curve(
+  model      = pooled_tuned$models$Y1,
+  x_var      = "time",
+  by         = "I_b",
+  n_grid     = 60,
+  recompute  = function(d) { d$I_b_X3 <- d$I_b * d$X3_t; d },
+  plot_title = "(C) Pooled XGB: predicted y1 over time"
+)
+
+if (isPlot){
+pdf("C_PooledXGB.pdf")
+print(curve_y1$plot)
+dev.off()
+}
+
+# Pooled Y2 over time, split by burst indicator.
+# recompute rebuilds the I_b * X3_t product column after I_b is varied.
+curve_y2 <- xgb_pred_curve(
+  model      = pooled_tuned$models$Y2,
+  x_var      = "time",
+  by         = "I_b",
+  n_grid     = 60,
+  recompute  = function(d) { d$I_b_X3 <- d$I_b * d$X3_t; d },
+  plot_title = "(D) Pooled XGB: predicted y2 over time"
+)
+
+if (isPlot){
+pdf("D_PooledXGB.pdf")
+print(curve_y2$plot)
+dev.off()
+}
+
+```
+
+### 4. Get slow-process output
+```{r}
+c(AIC = AIC(fast$slow_models$Y1), BIC = BIC(fast$slow_models$Y1))
+c(AIC = AIC(fast$slow_models$Y2), BIC = BIC(fast$slow_models$Y2))
+
+# # To re-create the models
+# ml_y1 <- make_Burst_long(
+#     dat = dat,
+#     target = "Y1"
+#   )
+# ml_y2 <- make_Burst_long(
+#     dat = dat,
+#     target = "Y2"
+#   )
+# 
+# # y1 models
+#   fit_linear_y1 <- glmer(
+#     y ~ I_b * X3_t + X2_t + X4_t + time + (1 | id),
+#     data = ml_y1,
+#     family = binomial()
+#   )
+# 
+#   fit_spline_y1 <- glmer(
+#     y ~ I_b * X3_t + X2_t + X4_t + ns(time, df = 4) + (1 | id),
+#     data = ml_y1,
+#     family = binomial()
+#   )
+#   
+#   fit_spline_randomIb_y1 <- glmer(
+#     y ~ I_b * X3_t + X2_t + X4_t + ns(time, df = 4) + (1 + I_b| id),
+#     data = ml_y1,
+#     family = binomial()
+#   )
+# 
+# # y2 models
+#   
+# fit_linear_y2 <- lmer(
+#   y ~ I_b * X3_t + X2_t + X4_t + time + (1 | id),
+#   data = ml_y2
+# )
+# 
+# fit_spline_y2 <- lmer(
+#   y ~ I_b+I_b:X3_t + X2_t + X4_t + ns(time, df = 4) + (1 | id),
+#   data = ml_y2
+# )
+# 
+# fit_spline_randomIb_y2 <- lmer(
+#     y ~ I_b * X3_t + X2_t + X4_t + ns(time, df = 4) + (1 + I_b | id),
+#     data = ml_y2
+#   )
+# 
+# anova(fit_linear_y1, fit_spline_y1)
+# anova(fit_spline_randomIb_y1, fit_spline_y1)
+```

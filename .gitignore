@@ -1,0 +1,40 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# renv library (keep renv.lock, ignore the library itself)
+renv/library/
+renv/local/
+renv/staging/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated data and results -- regenerate by running the scripts
+data/
+output/
+*.rds
+temp.R
+
+# VAE-SDE demo for now
+VAE-SDEDemo
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.synctex.gz
+
+# OS
+.DS_Store
+Thumbs.db

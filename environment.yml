@@ -1,0 +1,11 @@
+name: xgb_smep
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - xgboost
+  - numpy
+  - hyperopt
+  - scikit-learn
+  - pandas
