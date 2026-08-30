@@ -27,9 +27,6 @@ train/test splits, with optional Hyperopt hyperparameter tuning.
 │   └── XGB_MC_Grid_Cleaned_toShare.Rmd    # main driver -- run this
 ├── HelperFunctions/
 │   └── FeatureEngineeringRegularGridCleaned.R
-├── Setup/
-│   ├── environment.yml                    # conda environment definition
-│   └── SETUP.md                           # environment setup notes
 └── README.md
 ```
 
@@ -166,8 +163,6 @@ conda env export -n xgb_smep > environment-lock.yml
 sessionInfo()
 ```
 
-Delete the trailing `prefix:` line from the exported YAML before committing --
-it contains a local file path.
 
 
 ## Citation
