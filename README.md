@@ -170,13 +170,14 @@ sessionInfo()
 If you use this code, please cite:
 
 ```bibtex
-@article{ANON2026,
-  title   = {Title withheld for anonymous review},
-  author  = {Author(s) withheld for anonymous review},
-  journal = {Journal withheld for anonymous review},
-  year    = {2026},
-  note    = {Under review}
+@article{Chow26a,
+  title={It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods},
+  author={Chow, {Sy-Miin}},
+  journal={Multivariate Behavioral Research},
+  year={2026},
+  note={under review}
 }
+
 ```
 
 Full citation details and an archived version with a DOI will be added on
