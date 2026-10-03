@@ -1,85 +1,90 @@
-# Dynamic ILD Features with XGBoost
+# Machine Learning Methods for Intensive Longitudinal Data
 
 Demo code accompanying *[MANUSCRIPT TITLE]* ([AUTHORS], [YEAR]).
 
-This repository demonstrates two approaches to predicting person-level outcomes
-from dynamic features of intensive longitudinal data (ILD):
+Two illustrations, sharing a bivariate burst-driven Ornstein-Uhlenbeck (OU)
+data-generating process:
 
-1. **Pooled person-time XGBoost** -- a single model over all person-time
-   observations.
-2. **Sequential slow -> fast decomposition** -- mixed models capture the slow
-   (within-person, time-varying) structure; XGBoost then predicts person-level
-   summaries of the residuals from dynamic features.
+1. **XGBoost on dynamic ILD features.** Person-level outcomes predicted from
+   dynamic features, either by a pooled person-time model or by a sequential
+   slow -> fast decomposition in which mixed models capture the slow structure
+   and XGBoost predicts summaries of the residuals. Evaluated with permutation
+   importance across repeated subject-level splits.
+   
+2. **OU-SDE variational autoencoder.** A VAE whose latent process is a 2-state
+   OU stochastic differential equation with a burst-shifted attractor, assessed
+   by parameter recovery against the simulation truth.
 
-Both are evaluated with permutation importance across repeated subject-level
-train/test splits, with optional Hyperopt hyperparameter tuning.
-
-> **Note.** This is demonstration code documenting the methods in the
-> manuscript, not a general-purpose package. Defaults reproduce the reported
-> analyses unless noted.
+> **Note.** Demonstration code documenting the methods in the manuscript, not a
+> general-purpose package. Defaults reproduce the reported analyses.
 
 
 ## Repository structure
 
 ```
 .
-├── XGBDemo/
-│   └── XGB_MC_Grid_Cleaned_toShare.Rmd    # main driver -- run this
-├── HelperFunctions/
-│   └── FeatureEngineeringRegularGridCleaned.R
-└── README.md
+|-- XGBDemo/
+|   `-- XGB_MC_Grid_Cleaned_toShare.Rmd    # Illustration 1 driver
+|-- VAEDemo/
+|   `-- [VAE_DRIVER].ipynb                 # Illustration 2 driver
+|-- HelperFunctions/
+|   |-- FeatureEngineeringRegularGridCleaned.R
+|   `-- HelpfulFuncs_VAE_toshare.py
+|-- Setup/
+|   `-- environment_vae.yml
+`-- README.md
 ```
-
-All analysis functions live in the single helper file, sourced by the Rmd.
-Nothing else needs to be sourced.
 
 
 ## Requirements
 
-### R (>= 4.2)
+**R (>= 4.2).**
 
 ```r
-install.packages(c("ggplot2", "ggpattern", "xgboost",
-                   "lme4", "reticulate"))
+install.packages(c("ggplot2", "ggpattern", "xgboost", "lme4", "reticulate",
+                   "torch", "jsonlite", "dplyr", "readr"))
 ```
 
-`splines` ships with R. No other R packages are required -- in particular,
-`torch`, `tsfeatures`, `SHAPforxgboost`, and `dplyr` are **not** needed.
+The first five cover Illustration 1; `torch`, `jsonlite`, `dplyr` and `readr`
+are used by Illustration 2 to simulate the data and write the CSV and JSON that
+Python reads. `splines` ships with R. 
 
-### Python (>= 3.9)
+**Python (>= 3.9).** 
 
-Hyperparameter tuning runs in Python via `reticulate`. Set the environment up
-**outside R**, before opening an R session:
-
-```
-conda create -n xgb_smep python=3.11 -y
-conda activate xgb_smep
-conda install -c conda-forge numpy pandas scikit-learn xgboost hyperopt -y
-python -c "import numpy, pandas, sklearn, xgboost, hyperopt; print('ok')"
-```
-
-If `ok` prints, the environment is ready. Alternatively:
+One environment covers both illustrations. Find the file environment_vae.yml in the Setup folder 
+and create a conda environment as follows. A version of the yml locking the 
+exact versions of Python packages used can be found in environment-lock.yml.
 
 ```
-conda env create -f Setup/environment.yml
+conda env create -f Setup/environment_vae.yml
+conda activate vae
 ```
 
-Python is only required for the tuned runs (`tune = TRUE`). Sections with
-supplied hyperparameters run in R alone.
+After creating and activating the vae environment e.g., in Anaconda or miniconda prompt, try running
+the following Python code to see if you can import the packages fine.
+
+```
+python -c "import numpy, pandas, sklearn, xgboost, hyperopt, torch; print('ok')"
+```
+
+Illustration 1 needs Python only for the tuned runs (`tune = TRUE`);
+Illustration 2 needs it throughout, and runs on CPU but much faster on a GPU.
 
 
-## Running the demo
+## Illustration 1: XGBoost
 
 Open `XGBDemo/XGB_MC_Grid_Cleaned_toShare.Rmd` with the working directory set
-to `XGBDemo/`, then run the chunks in order. Knitting the whole document also
-works.
-
-The setup chunk sources the helper file and sets the seed. The next chunk binds
-the conda environment and defines the Python tuning functions:
+to `XGBDemo/` and run the chunks in order. The setup chunk sources the helper
+file and sets the seed; the next binds the conda environment:
 
 ```r
 library(reticulate)
-use_condaenv("xgb_smep", required = TRUE)   # match your env name
+use_condaenv("vae", required = TRUE)   # match your env name
+
+# If you get an error that your conda environment cannot be found, try
+# setting the Python interpreter directly within your conda environment:
+use_python("C:/Users/myname/.conda/envs/vae/python.exe", required = TRUE)
+py_config()
 setup_hyperopt_xgb()
 ```
 
@@ -88,86 +93,59 @@ binds one interpreter per session and cannot switch afterwards. If you get
 *"failed to initialize requested version of Python,"* restart R and make this
 the first Python-related call.
 
-
-### What each section does
-
 | Section | Contents |
 |---|---|
 | 1 | Simulate bivariate burst OU data (`simulate_burst_ou_mixed2`) |
-| 1a | Pooled person-time XGBoost, supplied hyperparameters |
-| 1b | Pooled XGBoost, Hyperopt-tuned |
-| 2a | Slow -> fast decomposition, supplied hyperparameters |
-| 2b | Slow -> fast decomposition, Hyperopt-tuned (slow models reused) |
+| 1a, 1b | Pooled person-time XGBoost: supplied hyperparameters, then Hyperopt-tuned |
+| 2a, 2b | Slow -> fast decomposition: supplied, then tuned (slow models reused) |
 | 2c | Compare tuned vs. untuned permutation importance |
 | 3 | Predicted response curves from a fitted pooled model |
-| 4 | Slow-model fit statistics; commented code to refit the mixed models |
+| 4 | Slow-model fit statistics |
+
+Settings: `N = 500` persons, 250-300 observations each, 15% missing, placed on
+a common grid with `grid_step = 0.05`. Outcomes are `Y1_resid_sd`,
+`Y2_resid_sd` and `resid_CCF_0`; no feature computed from the same series as
+the outcome is allowed as a predictor. Hyperopt losses are relative to an
+intercept-only baseline, so a tuned loss at or above 1.0 means the model is not
+beating the mean.
+
+`n_trials0` is set to **10** for a faster first run; the manuscript used
+**100**. `isPlot <- TRUE` writes the manuscript figures as PDFs. 
 
 
-### Runtime and settings
+## Illustration 2: OU-SDE VAE
 
-`n_trials0` controls the number of permutation-importance trials. It is set to
-**10** in the shared code for a faster first run; the manuscript used **100**.
-Increase it to reproduce the reported results:
-
-```r
-n_trials0 <- 100
-```
-
-Set `isPlot <- TRUE` to write the manuscript figures as PDFs into the working
-directory. Default is `FALSE`.
-
-Approximate runtime at `n_trials0 = 10` on [SPECS]: [TIME]. Sections 1b and 2b
-dominate; each Hyperopt run evaluates 30 parameter sets per outcome.
+Illustration 2 uses the same illustrative simulated data generated using a multi-temporal OU model. 
+The R demo in MainRunMC_VAE_SDE_Cleaned.Rmd implements the states-based and filtering-based VAE for fitting the OU model as explained in the paper.
 
 
-### Analysis details
-
-- Simulated data: `N = 500` persons, `Tmin = 250` to `Tmax = 300` observations
-  each, 2-state OU process with burst-driven shifts in baseline, 15% missing
-  by default.
-- Observations are placed on a common equally spaced grid with `grid_step =
-  0.05` before feature computation.
-- Fast-model outcomes: `Y1_resid_sd`, `Y2_resid_sd`, `resid_CCF_0`.
-- A symmetric exclusion rule applies to predictors: no feature computed from
-  the same series as the outcome being predicted.
-- Losses passed to Hyperopt are expressed relative to an intercept-only
-  baseline, so outcomes on different scales can be averaged across folds.
-  A tuned loss at or above 1.0 means the model is not beating the mean.
+The Jupyter notebook
+`VAEDemo/[VAE_DRIVER].ipynb` has demo code in Python for running the states-based and filtering-based VAE-SDE estimators. Most helper functions are stored in "../HelperFunctions/HelpfulFuncs_VAE_toshare.py" and can be loaded as follows..
 
 
-## Troubleshooting
-
-**`use_condaenv()` cannot find the environment.** Pass the full path instead of
-the name: `use_condaenv("/path/to/envs/xgb_smep", required = TRUE)`.
-
-**Integer arguments error in Python.** R passes bare numbers as doubles. Use
-`max_evals = 30L`, not `30`, for any argument that reaches Python as an integer.
-
-**`pip` retries against an unreachable index.** If your `pip.ini` has an extra
-index URL that does not resolve, either remove it (`pip config unset
-global.extra-index-url`) or install from conda-forge as above, which avoids pip
-entirely.
-
-
-## Reproducibility
-
-The seed is set once at the top of the Rmd (`seed_num <- 123`) and passed to the
-simulator and all model fits. To record exact package versions alongside a set
-of results:
 
 ```
-conda env export -n xgb_smep > environment-lock.yml
+| Section | Contents |
+|---|---|
+| 1 | Load data and split, build tensors (`read_simData`) |
+| 2 | Hyperparameter search (`setHyper`) |
+| 3 | Fit at the selected values (`fit_exo_sde_vae_fixed_hparams`) |
+| 4 | Sweep over auxiliary noise `R_a`, KL weight and seed (`autoRun`) |
+| 5 | Parameter recovery against truth (`recovery_table`, `sensitivity_report`) |
+| 6 | Export estimates for R (`save_python_estimates_for_r`) |
+
 ```
 
-```r
-sessionInfo()
-```
+`kl_weight = 1.0` gives an actual evidence lower bound; other values give a weighted objective whose
+loss is not comparable across different values of `kl_weight`, though the estimates for the SDE parameters 
+can still be compared. In addition, `R_a` is fixed rather than estimated.
 
+`m_evals` and `seeds` are set low for here for a demo run; the manuscript used
+[M_EVALS] and [N_SEEDS]. Run-to-run variability is large, so use at least two
+seeds for anything you intend to interpret. 
 
 
 ## Citation
-
-If you use this code, please cite:
 
 ```bibtex
 @article{Chow26a,
@@ -177,7 +155,6 @@ If you use this code, please cite:
   year={2026},
   note={under review}
 }
-
 ```
 
 Full citation details and an archived version with a DOI will be added on

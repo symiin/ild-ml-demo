@@ -32,9 +32,18 @@ After that, run the followings. Make sure that you give R the correct conda env 
 ```{r}
 ## Run at the top of every session, BEFORE any other Python use.
 library(reticulate)
-use_condaenv("xgb_smep", required = TRUE)
+# use_condaenv("vae", 
+#              conda = "Path_to_Conda_or_Miniconda/envs/",
+#              required = TRUE)
 
-setup_hyperopt_xgb()                    # defines the Python functions
+# If you get an error that your conda environment cannot be found, try
+# setting the Python interpreter to the python.exe in your conda environment:
+# 
+# use_python("Path_to_Conda_or_Miniconda/envs/vae/python.exe", required = TRUE)
+#py_config() #Check to see if you are using the correct Python interpreter
+
+# defines the Python functions in FeatureEngineeringRegularGridCleaned
+setup_hyperopt_xgb()                    
 
 ```
 
@@ -71,8 +80,8 @@ pooled <- run_pooled_xgb(
   targets   = c("Y1", "Y2"),
   n_trials  = n_trials0, #number of random subject-level train/test splits or trials
   test_prop = 0.30, #proportion of held-out (test) subjects
-  n_repeats = 10,
-  nrounds   = 300,
+  n_repeats = 10, #How many times each predictor gets shuffled within a trial
+  nrounds   = 300, #Number of boosting rounds
   params    = list(
     max_depth        = 3,
     eta              = 0.05,

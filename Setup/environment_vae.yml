@@ -1,0 +1,57 @@
+name: vae
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+
+  # Core numerics / data
+  - numpy
+  - pandas
+  - matplotlib
+
+  # Modeling
+  - scikit-learn        # sklearn.model_selection.KFold
+  - xgboost
+  - hyperopt            # fmin, tpe, hp, Trials, STATUS_OK
+
+  # Notebook support (VS Code / Jupyter)
+  - ipykernel
+  - jupyter
+
+  # PyTorch: installed via pip so the CUDA build matches your GPU.
+  # See the note at the bottom of this file for the CPU-only variant.
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch
+
+# ------------------------------------------------------------------
+# Create with:
+#     conda env create -f environment_vae.yml
+#     conda activate vae
+#
+# Then register the kernel for VS Code / Jupyter:
+#     python -m ipykernel install --user --name vae --display-name "Python (vae)"
+#
+# Verify the GPU is visible:
+#     python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+#
+# ------------------------------------------------------------------
+# Notes
+#
+# CUDA build: cu121 works on any driver new enough to report CUDA 12.1
+# or later, which yours does. If you want a newer runtime, swap the
+# index URL for cu124 or cu126 and recreate the environment. For a
+# machine with no NVIDIA GPU, delete the two pip lines above and add
+#     - cpuonly
+#     - pytorch
+# to the conda dependencies, with "- pytorch" added to the channels.
+#
+# numpy: if hyperopt raises an AttributeError about a removed numpy
+# alias on import, pin "- numpy<2" and recreate.
+#
+# Everything else HelpfulFuncs_VAE_toshare.py imports — os, sys, time,
+# itertools, traceback, json, math, copy, random, functools, pathlib,
+# pickle — ships with Python and needs no entry here.

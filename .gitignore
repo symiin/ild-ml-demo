@@ -22,7 +22,7 @@ output/
 temp.R
 
 # VAE-SDE demo for now
-VAE-SDEDemo
+#VAE-SDEDemo
 
 # LaTeX build artifacts
 *.aux
