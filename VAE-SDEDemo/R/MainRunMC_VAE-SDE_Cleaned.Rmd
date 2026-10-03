@@ -1,0 +1,562 @@
+---
+title: "Variational Encoder Fitting Confirmatory SDEs"
+output: html_document
+date: "2026-09-14"
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This tutorial implements variational autoencoders (VAEs) estimating a
+bivariate stochastic differential equation based on the
+Ornstein-Uhlenbeck (OU) model across two bursts, with burst-specific set
+point and drift coefficients -- specifically coupling coefficients, that
+are moderated by person-specific covariates. Parameter estimates
+returned by two versions of VAE, the states-based VAE and
+filtering-based VAE, are compared to the true values used in generation
+of the simulated data.
+
+If you find this code helpful, please cite:
+
+``` bibtex
+@article{Chow26a,
+  title={It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods},
+  author={Chow, {Sy-Miin}},
+  journal={Multivariate Behavioral Research},
+  year={2026},
+  note={under review}
+}
+```
+
+## 0. Getting started
+
+Before running any of the code in this tutorial, please check out the
+README file and install the required R packages. If you are hoping to
+use `Hyperopt` to run hyperparameter tuning in Python, then do set up
+the Python environment as explained in the README file.
+
+## 1. Simulate data
+
+```{r}
+library(torch)
+library(ggplot2)
+library(jsonlite)
+library(dplyr)
+library(readr)
+
+source("../../HelperFunctions/aux_vae_sde_functions_cleaned.R")
+
+NNow    = 500
+TmaxNow = 300
+TminNow = 250
+
+Tend = 30
+r = 1
+
+  seed_num <- 1234 + (r - 1)
+
+  dat <- simulate_burst_ou_mixed2(
+    N    = NNow,
+    Tmin = TminNow,
+    Tmax = TmaxNow,
+    seed = seed_num,
+    Tend = Tend
+  )
+
+  # FIXED: set.seed() here. torch_manual_seed() does not seed R's RNG, so the
+  # train/test split was not reproducible -- and that split is written into the
+  # JSON and reused by the Python implementation, so both languages were
+  # fitting a split that changed on every run.
+  set.seed(seed_num)
+
+  idx       <- sample(seq_len(NNow))
+  train_idx <- idx[1:round(0.8 * NNow)]
+  test_idx  <- idx[(round(0.8 * NNow) + 1):NNow]
+
+  save_simdata(
+    sim       = dat,
+    train_idx = train_idx,
+    test_idx  = test_idx,
+    data_file = paste0("../Python/MCburst_long_run", r, ".csv"),
+    info_file = paste0("../Python/MCburst_info_run", r, ".json")
+  )
+```
+
+### 2. Create Torch tensors
+
+```{r}
+#Q matrix
+Q <- torch_tensor(
+  matrix(
+    c(
+      1, 0,
+      0, 1
+    ),
+    nrow = 2,
+    byrow = TRUE
+  ),
+  dtype = torch_float()
+)
+
+# Outcome 1: binary
+# Outcome 2: continuous
+
+Y_train <- torch_stack(
+  list(
+    dat$Y_obs[train_idx,,1],
+    dat$Y_obs[train_idx,,2]
+  ),
+  dim = 3
+)
+
+
+Y_test <- torch_stack(
+  list(
+    dat$Y_obs[test_idx,,1],
+    dat$Y_obs[test_idx,,2]
+  ),
+  dim = 3
+)
+
+M_train <- torch_stack(
+  list(
+    dat$M[train_idx,,1],
+    dat$M[train_idx,,2]
+  ),
+  dim = 3
+)
+
+M_test <- torch_stack(
+  list(
+    dat$M[test_idx,,1],
+    dat$M[test_idx,,2]
+  ),
+  dim = 3
+)
+
+#Irregularly spaced time stamps
+times_train <- torch_tensor(dat$times[train_idx,],
+                            dtype = torch_float())
+times_test <- torch_tensor(dat$times[test_idx,],
+                           dtype = torch_float())
+
+#Indicator of padded data (to make maxT the same for all)
+#1 = Observed data; 0 = padded data
+time_mask_train <- torch_tensor(dat$time_mask[train_idx,],
+                                dtype = torch_float())
+time_mask_test <- torch_tensor(dat$time_mask[test_idx,],
+                               dtype = torch_float())
+
+# ---- Check dimensions ----
+Y_train$size()
+M_train$size()
+times_test$size()
+
+N_train <- Y_train$size(1)
+N_test <- Y_test$size(1)
+
+
+X_tv <- torch_tensor(
+  dat$X_tv,
+  dtype = torch_float()
+)
+
+# Columns kept here define the covariate indices used below: after this
+# subset, column 1 = I_b, 2 = X2, 3 = X3. ib_col / B_x_col / x_cols in
+# ou_sde_param_args index INTO THIS SUBSET, not into X_tv.
+X_train <- X_tv[train_idx,,c(1,2,3)]
+X_test <- X_tv[test_idx,,c(1,2,3)]
+
+n_x <- 3
+```
+
+### 3. Plot data
+
+```{r}
+y_col = 1; alpha_k = 1
+plot_spaghetti_ou(
+  dat = dat,
+  subject_ids = sample(seq_len(dim(dat$Y_obs)[1]), 10),
+  y_col = y_col,
+  alpha_k = alpha_k,
+  titlej = paste0("Observed Y",y_col," and true alpha ",alpha_k)
+)
+```
+
+## 4. Implement and run SDE-VAE
+
+#### SDE-VAE Model specification
+
+We use nn_module() to define our SDE-VAE. The function nn_module is
+Rtorch's mechanism for defining any differentiable computational model
+whose parameters will be optimized with automatic differentiation.
+
+Within nn_module, we need to define:
+
+| Part | What happens there |
+|------------------------------------|------------------------------------|
+| `initialize()` | Store fixed constants, define trainable parameters, define neural layers |
+| `encode()` | Map observed data to latent variables ($z$), i.e., define $q_{\phi}(z\mid Y)$ |
+| `reparameterize()` | Sample ($z$) from ($q_{\phi}(z\mid Y)$) |
+| `get_sde_params()` | Transform raw SDE parameters into usable constrained SDE parameters |
+| `decode()` | Map latent variables back to observed data; assemble all parameters needed to define $p_{\theta}(Y\mid z)$ & predict $Y$ |
+| `forward()` | Glue everything together: $Y$ → $q_{\phi}(z\mid Y)$ → $z$ → $p_{\theta}(Y\mid z)$ |
+
+Special cases of computational models that can be defined by nn_module
+include linear regression model, logistic regression model, latent
+variable model, state-space model, neural net, recurrent neural net,
+transformer, long short-term memory model, etc. This specification is
+contained in the function `exo_sde_vae` in
+`aux_vae_sde_functions_cleaned.R`.
+
+#### Set up VAE-SDE arguments, and starting values for parameters
+
+```{r}
+
+# TRUE  means A = Q fixed
+# FALSE means A entries where Q == 1 are freely estimated
+isFixedLoadings <- TRUE
+
+#Whether to use diag approximation posterior (q_{phi}(z) as N(mu, diag(Sigma)))
+isDiagApprox = TRUE # Set to TRUE for all demos; symm structure didn't work as well in terms of SDE parameter recovery
+
+#Provide starting or fixed parameter values
+ou_sde_param_args <- list(
+  alpha_value = c(-1, 1.5),
+  
+  alpha_shift_value = c(0.1, -0.1),
+  
+  gamma_shift_X_value = matrix(
+    c(0.10, 0.10),
+    nrow = 1,
+    byrow = TRUE
+  ),
+  
+  ib_col = 1, #Column index for Ib - first covariate
+  B_x_col = 2, #Column index for X2 - covariate that moderates coupling coefs
+  x_cols = 3, #Column index for x3 - covariate that moderates set point shifts
+  
+  B_value = matrix( #Starting values for drift matrix
+    c(
+      -0.3,  0.0,
+       0.0, -0.3
+    ),
+    nrow = 2,
+    byrow = TRUE
+  ),
+
+  gamma_B_X2_value = matrix( #Starting values for matrix of coefs of X2 on B
+    c(
+      0.00, 0.0,
+     0.0, 0.00
+    ),
+   nrow = 2,
+    byrow = TRUE
+  ),
+  
+  #Parameter lower and upper bounds
+  parBounds = list(
+    
+    B = list(
+      lower = matrix(
+        c(
+          -1.5, -0.75,
+          -0.75, -1.5
+        ),
+        nrow = 2,
+        byrow = TRUE
+      ),
+      upper = matrix(
+        c(
+          -0.001,  0.75,
+           0.75, -0.001
+        ),
+        nrow = 2,
+        byrow = TRUE
+      )
+    ),
+    
+    rho = list(
+      lower = -0.95,
+      upper =  0.95
+    ),
+    
+    gamma_B_X2 = list(
+      lower = matrix(
+        c(
+           0.00, -0.30,
+          -0.30,  0.00
+        ),
+        nrow = 2,
+        byrow = TRUE
+      ),
+      upper = matrix(
+        c(
+          0.00, 0.30,
+          0.30, 0.00
+        ),
+        nrow = 2,
+        byrow = TRUE
+      )
+    )
+  ),
+  
+  rho_value = 0.50, #Starting value for process noise cov matrix
+  
+  # NA for the binary outcome. init_ou_sde_params() replaces it with 1, but
+  # masked_mixed_nll_multi() never touches log_sigma_y for a binary column, so
+  # that element receives no gradient and stays at 1 throughout. Do not report
+  # it as an estimate.
+  sigma_y_value = c(NA, 0.60),
+  b_value = c(0, 0), #Values of measurement intercepts (values fixed when free_b = FALSE)
+  
+  free_alpha = TRUE, #Whether to freely estimate set point intercepts
+  free_alpha_shift = TRUE, #Whether to freely estimate shifts in set points at Ib=1
+  free_gamma_shift_X = TRUE,#Whether to freely estimate effect of X3 on shift in set points
+  
+  free_B = TRUE, #Whether to freely estimate drift coefficients
+  free_gamma_B_X2 = TRUE, #Whether to freely estimate x2 effect on coupling coefs
+  
+  free_rho = TRUE, #Whether to freely estimate process noise cor.
+  free_sigma_y = TRUE,#Whether to freely estimate measurement error variance(s)
+  free_b = FALSE,#Whether to freely estimate measurement intercepts
+  
+  R_a_value = .05
+)
+names(ou_sde_param_args)
+
+outcome_types <- c("binary", "gaussian") #Types of observed outcomes
+
+traj_kl_fn <- trajectory_auxiliary_kalman_elbo_penalty #filtering-based
+traj_kl_fn0 <- trajectory_kl_ou_attractor_prior        #states-based
+
+#Argument list to implement Euler approx for CT process noise cov matrix
+traj_kl_args <- list(
+  include_logp0   = FALSE,
+  init_state_mode = "encoder",
+  transition_mean = "exact",
+  transition_covariance = "euler"
+  #detach_B_in_Q   = TRUE #Only for transition_covariance = "exact"
+)
+
+#Argument list to implement exact structure for CT process noise cov matrix
+traj_kl_args2 <- list(
+  include_logp0   = FALSE,
+  init_state_mode = "encoder",
+  transition_mean = "exact",
+  transition_covariance = "exact",
+  detach_B_in_Q   = TRUE #Only for transition_covariance = "exact"
+)
+
+```
+
+#### Set hyperparameter values
+
+```{r}
+
+train_data <- list(
+  Y         = Y_train,
+  M         = M_train,
+  times     = times_train,
+  time_mask = time_mask_train,
+  X         = X_train
+)
+
+#test_arrays -> goes to extract_exo_sde_estimates. Torch tensors, the model's inputs. No truth in it.
+
+#forPlot_test_dat -> goes to summarize_OU_mixed_fit. R arrays, and it's the only one carrying ground truth (states, true).
+
+test_arrays <- list(
+  Y_obs     = Y_test,
+  M         = M_test,
+  times     = times_test,
+  time_mask = time_mask_test,
+  X         = X_test
+)
+
+forPlot_test_dat <- list(
+  Y_obs     = dat$Y_obs[test_idx, , ],
+  M         = dat$M[test_idx, , ],
+  times     = dat$times[test_idx, ],
+  time_mask = dat$time_mask[test_idx, ],
+  states    = dat$states[test_idx, , ],
+  true      = dat$true
+)
+
+
+# Set hyperparameters to values optimized with Hyperopt in Python earlier
+best_hp <- list(
+  hidden_size = 64L,
+  n_layers    = 1L,
+  dropout     = 0.07,
+  lr          = 0.02,
+  batch_size  = as.integer(round(N_train / 2))
+)
+
+cat("\nBest hyperparameters:\n")
+print(best_hp)
+
+```
+
+#### Run final VAE-SDE model
+
+```{r}
+# Commented out and loaded pre-run Rdata file. But uncomment to run the states-based and filtering based VAEs.
+# t0 = Sys.time()
+# print(paste0("Starting states-based VAE!"))
+# res_statesFinal <- autoRun(
+#   R_a_values = c(NA),
+#   kl_weights = c(.1),
+#   seeds      = c(5678),
+# 
+#   train_data = train_data,
+#   test_arrays = test_arrays,
+#   test_dat   = forPlot_test_dat,
+# 
+#   Q = Q,
+#   sde_param_args = ou_sde_param_args,
+# 
+#   trajectory_kl_fn = traj_kl_fn0,
+#   trajectory_kl_args = traj_kl_args,
+# 
+#   measurement_loss_fn = masked_mixed_nll_multi,
+#   measurement_loss_args = list(outcome_types = outcome_types),
+# 
+#   best_params = best_hp,
+# 
+#   n_epochs = 1000,
+#   patience = 75,
+#   out_prefix = "FinalStates",
+#   keep_est = TRUE
+# )
+# t1a = Sys.time()-t0
+#   
+# t0 =  Sys.time()  
+# print(paste0("Starting filtering-based VAE!"))
+# res_filterFinal <- autoRun(
+#   R_a_values = c(.05),
+#   kl_weights = c(.1),
+#   seeds      = c(5678),
+# 
+#   train_data = train_data,
+#   test_arrays = test_arrays,
+#   test_dat   = forPlot_test_dat,
+# 
+#   Q = Q,
+#   sde_param_args = ou_sde_param_args,
+# 
+#   trajectory_kl_fn = traj_kl_fn,
+#   trajectory_kl_args = traj_kl_args,
+# 
+#   measurement_loss_fn = masked_mixed_nll_multi,
+#   measurement_loss_args = list(outcome_types = outcome_types),
+# 
+#   best_params = best_hp,
+# 
+#   n_epochs = 1000,
+#   patience = 75,
+#   out_prefix = "FinalFilter",
+#   keep_est = TRUE
+# )
+# t1b = Sys.time()-t0
+# 
+# save(res_statesFinal, res_filterFinal, t1a, t1b, file = "Finalres_toSave.RData")
+
+load("Finalres_toSave.RData")
+
+```
+
+### 5. Inspect Results
+
+```{r}
+# One row per configuration: validation loss, best epoch, run time, and the
+# recovery summaries.
+res_statesFinal$wide
+res_filterFinal$wide
+
+res_statesFinal$failures
+res_filterFinal$failures
+
+recovery_table(res_statesFinal)
+recovery_table(res_filterFinal)
+```
+
+#### Make some plots to inspect the results
+
+Plot true and estimated latent variable estimates. For states-based VAE, the latent variable estimates are based on the means of proposal distribution for the states-based VAE, and filtered estimates of the latent variables for the filtering-based VAE.
+
+```{r}
+
+pdat_ou_pred <- make_BurstOU_compare_plot_data(
+  est_list     = list(res_statesFinal$est[[1]], res_filterFinal$est[[1]]),
+  model_labels = c("States-based", "Filtering-based"),
+  dat          = forPlot_test_dat,
+  subject_ids  = test_idx,
+  subjects     = test_idx[1:4], #Use a subset of subjects
+  state_source = c("auxiliary_mean", "filtered")
+)
+
+plot_BurstOU_yhat_obs_latent(
+  pdat = pdat_ou_pred,
+  outcomes = c("z1", "z2"),
+  facet_by_subject = TRUE
+)
+```
+
+```{r}
+plot_BurstOU_compare_yhat_latent(
+  pdat = pdat_ou_pred,
+  outcome = "z1",
+  facet_layout = c(2, 2),
+  reference_model = "States-based",
+  true_point_col = "black",
+  true_point_pch = 16,
+  true_point_cex = 1.2,
+  
+  # font sizes
+  main_cex = 1.5,
+  axis_cex = 1.2,
+  lab_cex = 1.3,
+  strip_cex = 1.3,
+  legend_cex = 1.2,
+  
+  model_cols = c(
+    "States-based"    = "#0072B2",
+    "Filtering-based" = "#009E73"
+  ),
+  model_ltys = c(
+    "States-based"    = 1,
+    "Filtering-based" = 2
+  ),
+  model_lwd = 4,
+  reference_lwd = 5,
+  main = "Latent Variable Estimates Across Models",
+  ylab = expression(z[1]),
+  legend_position = "bottom"
+)
+
+
+```
+
+#### Benchmark CPU time
+
+```{r}
+
+
+timing <- data.frame(
+  section = c("States-based", "Filtering-based"),
+  minutes = round(c(t1a, t1b) / 60, 2),
+  cpu     = trimws(suppressWarnings(utils::readRegistry(
+              "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+              hive = "HLM"))$ProcessorNameString),
+  cores   = parallel::detectCores(logical = FALSE),
+  ram_gb  = round(ps::ps_system_memory()$total / 1024^3, 1)
+)
+
+timing
+
+```
