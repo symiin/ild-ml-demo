@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the article below."
+title: "Machine Learning Methods for Intensive Longitudinal Data (demo code)"
+authors:
+  - family-names: Chow
+    given-names: Sy-Miin
+license: MIT
+preferred-citation:
+  type: article
+  title: "It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods"
+  authors:
+    - family-names: Chow
+      given-names: Sy-Miin
+  journal: "preprint"
+  year: 2026, under review

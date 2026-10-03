@@ -163,7 +163,8 @@ acceptance.
 
 ## License
 
-[LICENSE] -- see `LICENSE`.
+Code is released under the MIT License -- see `LICENSE`. If you use this
+code in published work, please cite Chow (2026); see Citation above.
 
 
 ## Contact
