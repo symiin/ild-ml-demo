@@ -1,6 +1,6 @@
 # Machine Learning Methods for Intensive Longitudinal Data
 
-Demo code accompanying "It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods" (Chow, 2026)"
+Demo code accompanying Chow (2026). *It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods*.
 
 Two illustrations, sharing a bivariate burst-driven Ornstein-Uhlenbeck (OU)
 data-generating process:
