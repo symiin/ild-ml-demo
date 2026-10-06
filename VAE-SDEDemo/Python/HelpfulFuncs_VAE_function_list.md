@@ -44,7 +44,7 @@ and callees within this file.
 ## Covariance and loading construction
 
 * **Cholesky helpers: `make_diag_cholesky_time()`, `make_cholesky_time()`** —
-  Turn raw encoder output into [N, T, K, K] Cholesky factors, diagonal-only or
+  Turn raw encoder output into $[N, T, K, K]$ Cholesky factors, diagonal-only or
   full lower-triangular, with the `softplus + 1e-4` floor matching the R code.
   Both used inside `ExoSDEVAE`.
 * **`make_A_from_free()`** — Assembles the loading matrix from free entries using
@@ -53,10 +53,9 @@ and callees within this file.
 ## SDE parameter block
 
 * **`init_ou_sde_params()`** — Registers all OU/measurement parameters on the
-  module (α, B, ρ, σ_y, b, R_a, shift and moderation terms), as free parameters
-  or fixed buffers per `free_`. **R_a is fixed by construction here, not
-  estimated.** Calls `get_par_bounds()`, `inv_softplus()`,
-  `raw_from_bounded()`.
+  module as fixed vs. freely estimated parameters with flags starting with  `free_`. 
+  **R_a** is fixed at a constant. **`init_ou_sde_params()`** calls `get_par_bounds()`, `inv_softplus()`,
+  `raw_from_bounded()` to set appropriate constraints and transformations on the parameters.
 * **`get_ou_sde_params()`** — Reads those raw parameters back on the natural
   scale. Calls `bounded_from_raw()`.
 * Both take `self` and are attached to the model via the `sde_param_init_fn` /
@@ -81,36 +80,36 @@ and callees within this file.
 
 ## Trajectory penalties — two alternatives
 
-* **`trajectory_kl_ou_attractor_prior()`** *[proposed]* — Closed-form trajectory
+* **`trajectory_kl_ou_attractor_prior()`** (states-based VAE) --- Closed-form trajectory
   KL against the OU attractor prior. Calls `exact_ou_Q_delta_t_2d()` and an
   internal `compute_alpha_t()`. Supplied as the default `trajectory_kl_fn` in
   `fit_exo_sde_vae_fixed_hparams()` and `objective_cv_hyperopt()`.
 * **`gaussian_cholesky_log_prob_time()`, `gaussian_full_log_prob_batch()`** —
   Gaussian log densities: time-indexed with Cholesky factors (used for
-  `log q_φ(a|y)`), and batched with a full covariance (used for the filter's
+  $\log q_{\phi}(a|y)$), and batched with a full covariance (used for the filter's
   predictive densities).
-* **`make_auxiliary_R_a()`** — Expands R_a (scalar, [K], [K,K], [N,K,K], or
-  [N,T,K]) into the auxiliary observation covariance for `a_k | z_k`. Called by
+* **`make_auxiliary_R_a()`** — Expands R_a (scalar, $[K]$, $[K,K]$, $[N,K,K]$, or
+  $[N,T,K]$) into the auxiliary observation covariance for $a_k \mid z_k$. Called by
   the Kalman filter.
-* **`build_ou_alpha_and_B_i()`** — Constructs α_t [N, T, K] and B_i from X,
-  including the shift and B-moderation covariate effects; the revised version
-  reads time-varying columns across all T rather than only t = 1. Called by
+* **`build_ou_alpha_and_B_i()`** — Constructs $\alpha_t$ $[N, T, K]$ and $B_i$ from covariates $X$,
+  including the shift and $B$-moderation covariate effects; the revised version
+  reads time-varying columns across all T rather than only $t$ $=$ 1. Called by
   `trajectory_auxiliary_kalman_elbo_penalty()`.
 * **`trajectory_log_prob_auxiliary_kalman_ou()`** *[filter + RTS smoother]* —
-  Continuous-discrete Kalman filter giving `log p_θ(a_1:T)`, with optional
+  Continuous-discrete Kalman filter giving $\log p_{\theta}(a_{1:T})$, with optional
   smoothing. Calls `get_B_at()`, `exact_ou_Q_delta_t_2d()`,
   `ou_stationary_cov_from_B_D()`, `make_auxiliary_R_a()`,
   `gaussian_full_log_prob_batch()`, `symmetrize_batch()`.
 * **`trajectory_auxiliary_kalman_elbo_penalty()`** *[Ansari]* — Drop-in
   replacement for `trajectory_kl_ou_attractor_prior()`: treats `z_all` as the
   sampled auxiliary trajectory and returns
-  `[log q_φ(a|y) − log p_θ(a)] / N`. Calls `build_ou_alpha_and_B_i()`,
+  $[\log q_{\phi}(a\mid y) - \log p_{\theta}(a)] / N$. Calls `build_ou_alpha_and_B_i()`, 
   `make_obs_mask_from_M()`, `trajectory_log_prob_auxiliary_kalman_ou()`,
   `gaussian_cholesky_log_prob_time()`. Consumed by
   `extract_python_exo_sde_estimates()` and
   `extract_ansari_auxiliary_filter_outputs()`.
 * **`extract_ansari_auxiliary_filter_outputs()`** — Diagnostics only: reruns the
-  fitted model with `run_smoother=True` and returns filtered/smoothed states.
+  fitted model with `run_smoother = True` and returns filtered/smoothed states.
   Calls `trajectory_auxiliary_kalman_elbo_penalty()`, `tensor_to_numpy()`.
 
 ## Model, loss, training
@@ -155,7 +154,7 @@ and callees within this file.
   version is the one `save_hyperopt_run_outputs()` calls; the plain version is
   not referenced elsewhere in the file.
 
-## Hyperopt reporting
+## Other reporting helper functions
 
 * **`hyperopt_trials_to_dataframe()`, `plot_hyperopt_optimization_summary()`** —
   Convert a Trials object into a trial-level dataframe; plot objective by trial
@@ -168,11 +167,6 @@ and callees within this file.
   table and fit metrics. Calls `extract_python_exo_sde_estimates()`,
   `summarize_OU_mixed_fit()`, `save_python_estimates_for_r_with_fingerprint()`,
   `json_safe()`. Called by `objective_cv_hyperopt()`.
-
----
-
-## Present in the file but absent from the original list
-
 * **`_resolve()`** — Private name-to-object lookup used by `autoRun()`.
 * **`autoRun()`** — Sweep driver over `R_a_values` × `kl_weights` × `seeds`,
   collecting parameter tables and fit metrics across configurations. Calls

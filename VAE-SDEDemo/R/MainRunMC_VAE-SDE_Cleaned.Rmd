@@ -549,7 +549,7 @@ plot_BurstOU_compare_yhat_latent(
 
 timing <- data.frame(
   section = c("States-based", "Filtering-based"),
-  minutes = round(c(t1a, t1b) / 60, 2),
+  minutes = round(c(as.numeric(t1a), as.numeric(t1b)) / 60, 2),
   cpu     = trimws(suppressWarnings(utils::readRegistry(
               "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
               hive = "HLM"))$ProcessorNameString),
