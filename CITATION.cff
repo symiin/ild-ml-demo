@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this code, please cite it as below."
-title: "Demo code for Chow (2026), 2024 Presidential Address: It's About Time --- Intensive Longitudinal Modeling with Machine Learning Methods"
+title: "Demo code for Chow (2026), It's About Time --- Intensive Longitudinal Modeling with Machine Learning Methods"
 type: software
 authors:
   - family-names: Chow

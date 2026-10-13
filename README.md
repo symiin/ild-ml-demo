@@ -149,10 +149,20 @@ seeds for anything you intend to interpret.
   journal={Multivariate Behavioral Research},
   year={2026, in press}
 }
-```
 
-Full citation details and an archived version with a DOI will be added on
-acceptance.
+@misc{Chow2026democode,
+  author       = {Chow, Sy-Miin},
+  title        = {Demo Code for {Chow (2026), It's About Time --- Intensive Longitudinal Modeling with Machine Learning Methods}},
+  year         = {2026},
+  howpublished = {Zenodo},
+  version      = {1.0.0},
+  doi          = {10.5281/zenodo.23331958},
+  url          = {https://doi.org/10.5281/zenodo.23331958},
+  note         = {Software. Source code available at https://github.com/symiin/ild-ml-demo}
+}
+
+
+```
 
 
 ## License
