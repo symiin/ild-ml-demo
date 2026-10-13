@@ -2,8 +2,7 @@
 
 Demo code accompanying Chow (2026). *It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods*.
 
-Two illustrations, sharing a bivariate burst-driven Ornstein-Uhlenbeck (OU)
-data-generating process:
+Two illustrations based on data simulated with a bivariate burst-driven Ornstein-Uhlenbeck (OU) model:
 
 1. **XGBoost on dynamic ILD features.** Person-level outcomes predicted from
    dynamic features, either by a pooled person-time model or by a sequential
@@ -11,12 +10,8 @@ data-generating process:
    and XGBoost predicts summaries of the residuals. Evaluated with permutation
    importance across repeated subject-level splits.
    
-2. **OU-SDE variational autoencoder.** A VAE whose latent process is a 2-state
-   OU stochastic differential equation with a burst-shifted attractor, assessed
-   by parameter recovery against the simulation truth.
-
-> **Note.** Demonstration code documenting the methods in the manuscript, not a
-> general-purpose package. Defaults reproduce the reported analyses.
+2. **OU-SDE variational autoencoder.** Two variational autoencoder for fitting 
+stochastic differential equation models (VAE-SDE).
 
 
 ## Repository structure

@@ -1,15 +1,16 @@
 cff-version: 1.2.0
-message: "If you use this code, please cite the article below."
-title: "Machine Learning Methods for Intensive Longitudinal Data (demo code)"
+message: "If you use this code, please cite it as below."
+title: "Demo code for Chow (2026), 2024 Presidential Address: It's About Time --- Intensive Longitudinal Modeling with Machine Learning Methods"
+type: software
 authors:
   - family-names: Chow
     given-names: Sy-Miin
+version: 1.0.0
+date-released: 2026-10-13
 license: MIT
-preferred-citation:
-  type: article
-  title: "It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods"
-  authors:
-    - family-names: Chow
-      given-names: Sy-Miin
-  journal: "Multivariate Behavioral Research"
-  year: 2026, in press
+repository-code: "https://github.com/symiin/ild-ml-demo"
+doi: 10.5281/zenodo.23331958
+keywords:
+  - xgboost
+  - variational autoencoder
+  - stochastic differential equations
