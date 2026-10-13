@@ -149,11 +149,10 @@ seeds for anything you intend to interpret.
 
 ```bibtex
 @article{Chow26a,
-  title={It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods},
+  title={2024 Presidential Address: It's About Time -- Intensive Longitudinal Modeling with Machine Learning Methods},
   author={Chow, {Sy-Miin}},
   journal={Multivariate Behavioral Research},
-  year={2026},
-  note={under review}
+  year={2026, in press}
 }
 ```
 

@@ -353,7 +353,7 @@ save_simdata <- function(
   
   write.csv(df, data_file, row.names = FALSE)
   
-  # Sidecar info file.
+  # Info file.
   # Store both R 1-based indices and Python 0-based IDs.
   info <- list(
     N = N,
